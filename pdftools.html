@@ -3,75 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Tools - Local Page Extractor & Reorder</title>
+    <title>PDF Tools - Local Extractor, Reorder & Sign</title>
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+        :root { --primary: #007bff; --success: #28a745; --dark: #333; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: #f4f7f6; margin: 0; padding: 20px; color: var(--dark); }
         .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        
         header { border-bottom: 2px solid #eee; margin-bottom: 20px; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .controls { display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap; background: #f9f9f9; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
         
-        .controls { 
-            margin-bottom: 20px; 
-            display: flex; 
-            gap: 15px; 
-            align-items: flex-end; 
-            flex-wrap: wrap; 
-            background: #f9f9f9;
-            padding: 15px;
-            border-radius: 6px;
-        }
-
-        .export-settings { display: flex; align-items: center; gap: 10px; flex-grow: 1; justify-content: flex-end; }
-        input[type="text"] { padding: 10px; border: 1px solid #ccc; border-radius: 4px; width: 200px; }
-        
-        #page-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); 
-            gap: 20px; 
-            margin-top: 20px; 
-        }
-
-        .page-card { 
-            border: 2px solid #ddd; 
-            border-radius: 6px; 
-            padding: 10px; 
-            text-align: center; 
-            background: #fff; 
-            cursor: grab; 
-            transition: transform 0.1s ease; 
-            position: relative; 
-            user-select: none;
-        }
-        .page-card:active { cursor: grabbing; }
-        .page-card.selected { border-color: #007bff; background-color: #e7f1ff; }
+        #page-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; }
+        .page-card { border: 2px solid #ddd; border-radius: 6px; padding: 10px; text-align: center; background: #fff; cursor: grab; position: relative; transition: all 0.2s; }
+        .page-card.selected { border-color: var(--primary); background-color: #e7f1ff; }
         .page-card canvas { width: 100%; height: auto; border: 1px solid #eee; pointer-events: none; }
         
-        /* Dragging styles */
-        .sortable-ghost { opacity: 0.4; border: 2px dashed #007bff; }
+        .btn { padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-outline { background: transparent; border: 1px solid var(--primary); color: var(--primary); font-size: 12px; padding: 5px 10px; cursor: pointer; border-radius: 4px;}
+        .btn-zoom { position: absolute; bottom: 35px; right: 10px; background: rgba(0,0,0,0.6); color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; }
         
-        .checkbox-container { position: absolute; top: 8px; left: 8px; z-index: 10; }
-        .checkbox-container input { width: 20px; height: 20px; cursor: pointer; }
+        /* Modal Styles */
+        #modal-overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 20px; border-radius: 8px; max-width: 90%; max-height: 95vh; overflow: auto; text-align: center; position: relative; }
+        #zoom-canvas-container { position: relative; border: 1px solid #ccc; display: inline-block; cursor: crosshair; }
+        #signature-layer { position: absolute; top: 0; left: 0; }
+        .modal-btns { margin-top: 15px; display: flex; justify-content: center; gap: 10px; }
         
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn-success { background-color: #28a745; color: white; }
-        .btn-outline { background-color: transparent; border: 1px solid #007bff; color: #007bff; font-size: 0.8em; padding: 5px 10px; margin-left: 5px; }
-        .btn:disabled { background-color: #ccc; cursor: not-allowed; }
-        
-        #status { margin-bottom: 10px; font-size: 0.9em; color: #555; }
-        .hint { font-size: 0.8em; color: #888; margin-top: 5px; }
+        .checkbox-container { position: absolute; top: 8px; left: 8px; z-index: 10; scale: 1.3; }
+        #status { margin-bottom: 10px; font-weight: 500; }
+        .signed-badge { display: none; position: absolute; top: 8px; right: 8px; background: var(--success); color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <header>
-        <div>
-            <h1 style="margin:0;">PDF Tools</h1>
-            <div class="hint">Select pages and drag them to change the output order.</div>
-        </div>
+        <h1>PDF Tools</h1>
         <div id="bulk-actions" style="display:none;">
             <button class="btn-outline" onclick="toggleAll(true)">Select All</button>
             <button class="btn-outline" onclick="toggleAll(false)">Clear All</button>
@@ -79,171 +50,191 @@
     </header>
 
     <div class="controls">
-        <div>
-            <label style="display:block; margin-bottom:5px; font-weight:bold;">1. Load PDF</label>
-            <input type="file" id="pdf-upload" accept="application/pdf">
-        </div>
-
-        <div class="export-settings">
-            <div>
-                <label style="display:block; margin-bottom:5px; font-weight:bold;">2. Rename & Save</label>
-                <input type="text" id="filename-input" placeholder="New filename" value="extracted_pages">
-                <span>.pdf</span>
-                <button id="download-btn" class="btn btn-success" disabled>Export PDF</button>
-            </div>
+        <input type="file" id="pdf-upload" accept="application/pdf">
+        <div style="flex-grow:1; display:flex; justify-content:flex-end; align-items:center; gap:10px;">
+            <input type="text" id="filename-input" value="my_document_edited">.pdf
+            <button id="download-btn" class="btn btn-success" disabled>Export PDF</button>
         </div>
     </div>
 
-    <div id="status">Upload a file to start...</div>
+    <div id="status">Upload a PDF to begin...</div>
     <div id="page-grid"></div>
 </div>
 
+<div id="modal-overlay">
+    <div class="modal-content">
+        <h3 id="modal-title">Zoom & Sign Page</h3>
+        <p style="font-size: 13px; color: #666;">Click and drag on the page to sign. Signatures are applied on export.</p>
+        <div id="zoom-canvas-container">
+            <canvas id="zoom-canvas"></canvas>
+            <canvas id="signature-layer"></canvas>
+        </div>
+        <div class="modal-btns">
+            <button class="btn" onclick="clearSignature()" style="background:#eee;">Clear Signature</button>
+            <button class="btn btn-success" onclick="closeModal()">Save & Close</button>
+        </div>
+    </div>
+</div>
+
 <script>
-    const { PDFDocument } = PDFLib;
+    const { PDFDocument, rgb } = PDFLib;
     const pdfUpload = document.getElementById('pdf-upload');
     const downloadBtn = document.getElementById('download-btn');
     const pageGrid = document.getElementById('page-grid');
     const status = document.getElementById('status');
-    const filenameInput = document.getElementById('filename-input');
-    const bulkActions = document.getElementById('bulk-actions');
-
+    
+    // Signature state
     let currentPdfBytes = null;
-    let totalPagesCount = 0;
-
-    // Initialize PDF.js
+    let pageSignatures = {}; // Stores signature data-urls keyed by original page index
+    let activePageIndex = null;
+    
+    // PDF.js setup
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-    // Initialize SortableJS on the grid
-    new Sortable(pageGrid, {
-        animation: 150,
-        ghostClass: 'sortable-ghost'
-    });
+    new Sortable(pageGrid, { animation: 150 });
 
     pdfUpload.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
-        status.textContent = "Processing PDF...";
         pageGrid.innerHTML = "";
-        downloadBtn.disabled = true;
-        bulkActions.style.display = 'block';
-
-        const originalName = file.name.replace(/\.[^/.]+$/, "");
-        filenameInput.value = `${originalName}_edited`;
-
+        pageSignatures = {};
         const arrayBuffer = await file.arrayBuffer();
         currentPdfBytes = arrayBuffer;
-
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
-        totalPagesCount = pdf.numPages;
-
-        for (let i = 1; i <= totalPagesCount; i++) {
+        
+        for (let i = 1; i <= pdf.numPages; i++) {
             const card = document.createElement('div');
             card.className = 'page-card';
-            // Important: store the original 0-based index
-            card.dataset.originalIndex = i - 1; 
-            card.id = `page-slot-${i}`;
-            card.innerHTML = `<div style="height:200px; display:flex; align-items:center; justify-content:center;">...</div>`;
+            card.dataset.idx = i - 1;
+            card.id = `slot-${i-1}`;
+            card.innerHTML = `<div class="btn-zoom" onclick="openModal(event, ${i-1})">🔍</div>
+                             <div class="signed-badge" id="badge-${i-1}">SIGNED</div>
+                             <div class="checkbox-container"><input type="checkbox" class="cb"></div>
+                             <div style="font-size:11px; margin-top:5px;">Page ${i}</div>`;
             pageGrid.appendChild(card);
-            renderPagePreview(pdf, i);
+            renderThumb(pdf, i, card);
+            
+            card.onclick = (ev) => {
+                if (ev.target.classList.contains('btn-zoom')) return;
+                const cb = card.querySelector('.cb');
+                if (ev.target !== cb) cb.checked = !cb.checked;
+                card.classList.toggle('selected', cb.checked);
+                downloadBtn.disabled = !document.querySelector('.cb:checked');
+            };
         }
-        updateStatus();
+        status.textContent = `Loaded ${pdf.numPages} pages. Drag to reorder, click 🔍 to sign.`;
+        document.getElementById('bulk-actions').style.display = 'block';
     });
 
-    async function renderPagePreview(pdf, pageNum) {
-        const page = await pdf.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 0.4 });
+    async function renderThumb(pdf, num, container) {
+        const page = await pdf.getPage(num);
+        const viewport = page.getViewport({ scale: 0.3 });
         const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-
-        await page.render({ canvasContext: context, viewport: viewport }).promise;
-
-        const card = document.getElementById(`page-slot-${pageNum}`);
-        card.innerHTML = `
-            <div class="checkbox-container">
-                <input type="checkbox" class="page-checkbox">
-            </div>
-            <div style="font-size:0.75em; font-weight:bold; margin-top:5px;">Original Page ${pageNum}</div>
-        `;
-        card.prepend(canvas);
-
-        card.onclick = (e) => {
-            const cb = card.querySelector('.page-checkbox');
-            if (e.target !== cb) cb.checked = !cb.checked;
-            
-            if (cb.checked) card.classList.add('selected');
-            else card.classList.remove('selected');
-            
-            checkSelectionCount();
-        };
+        canvas.width = viewport.width; canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        container.prepend(canvas);
     }
 
-    function checkSelectionCount() {
-        const selectedCount = document.querySelectorAll('.page-checkbox:checked').length;
-        downloadBtn.disabled = selectedCount === 0;
-        status.textContent = `${totalPagesCount} pages loaded. ${selectedCount} selected for export.`;
-    }
+    // Modal Logic
+    const overlay = document.getElementById('modal-overlay');
+    const zCanvas = document.getElementById('zoom-canvas');
+    const sCanvas = document.getElementById('signature-layer');
+    const sCtx = sCanvas.getContext('2d');
+    let drawing = false;
 
-    function updateStatus() {
-        status.textContent = `${totalPagesCount} pages loaded. Drag thumbnails to reorder.`;
-    }
-
-    function toggleAll(select) {
-        document.querySelectorAll('.page-card').forEach(card => {
-            const cb = card.querySelector('.page-checkbox');
-            if (cb) {
-                cb.checked = select;
-                if (select) card.classList.add('selected');
-                else card.classList.remove('selected');
-            }
-        });
-        checkSelectionCount();
-    }
-
-    downloadBtn.addEventListener('click', async () => {
-        status.textContent = "Generating your PDF...";
+    async function openModal(e, idx) {
+        e.stopPropagation();
+        activePageIndex = idx;
+        overlay.style.display = 'flex';
         
-        try {
-            const pdfCopy = currentPdfBytes.slice(0);
-            const srcDoc = await PDFDocument.load(pdfCopy);
-            const newDoc = await PDFDocument.create();
-            
-            // This is the magic: we look at the CURRENT order of cards in the DOM
-            const cards = Array.from(pageGrid.querySelectorAll('.page-card'));
-            const pagesToCopy = [];
-
-            cards.forEach(card => {
-                const cb = card.querySelector('.page-checkbox');
-                if (cb && cb.checked) {
-                    // Get the original index we stored earlier
-                    pagesToCopy.push(parseInt(card.dataset.originalIndex));
-                }
-            });
-
-            if (pagesToCopy.length === 0) return;
-
-            const copiedPages = await newDoc.copyPages(srcDoc, pagesToCopy);
-            copiedPages.forEach(p => newDoc.addPage(p));
-
-            const pdfBytes = await newDoc.save();
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-            
-            let name = filenameInput.value.trim() || 'reordered_document';
-            if (!name.toLowerCase().endsWith('.pdf')) name += '.pdf';
-
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = name;
-            link.click();
-            
-            status.textContent = "PDF Exported Successfully!";
-        } catch (err) {
-            console.error(err);
-            status.textContent = "Error during export: " + err.message;
+        const pdf = await pdfjsLib.getDocument({ data: currentPdfBytes.slice(0) }).promise;
+        const page = await pdf.getPage(idx + 1);
+        const viewport = page.getViewport({ scale: 1.5 }); // Zoomed scale
+        
+        zCanvas.width = sCanvas.width = viewport.width;
+        zCanvas.height = sCanvas.height = viewport.height;
+        
+        await page.render({ canvasContext: zCanvas.getContext('2d'), viewport }).promise;
+        
+        // Load existing signature if any
+        sCtx.clearRect(0,0, sCanvas.width, sCanvas.height);
+        if (pageSignatures[idx]) {
+            const img = new Image();
+            img.onload = () => sCtx.drawImage(img, 0, 0);
+            img.src = pageSignatures[idx];
         }
+    }
+
+    function closeModal() {
+        const hasData = sCtx.getImageData(0,0,sCanvas.width, sCanvas.height).data.some(channel => channel !== 0);
+        if (hasData) {
+            pageSignatures[activePageIndex] = sCanvas.toDataURL();
+            document.getElementById(`badge-${activePageIndex}`).style.display = 'block';
+        } else {
+            delete pageSignatures[activePageIndex];
+            document.getElementById(`badge-${activePageIndex}`).style.display = 'none';
+        }
+        overlay.style.display = 'none';
+    }
+
+    function clearSignature() { sCtx.clearRect(0, 0, sCanvas.width, sCanvas.height); }
+
+    // Drawing Logic
+    const getPos = (e) => {
+        const rect = sCanvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return [clientX - rect.left, clientY - rect.top];
+    };
+
+    const start = (e) => { drawing = true; sCtx.beginPath(); sCtx.moveTo(...getPos(e)); e.preventDefault(); };
+    const move = (e) => { if (drawing) { sCtx.lineTo(...getPos(e)); sCtx.stroke(); } e.preventDefault(); };
+    const stop = () => drawing = false;
+
+    sCanvas.addEventListener('mousedown', start); sCanvas.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', stop);
+    sCanvas.addEventListener('touchstart', start); sCanvas.addEventListener('touchmove', move);
+    sCanvas.addEventListener('touchend', stop);
+    sCtx.lineWidth = 2; sCtx.lineCap = 'round'; sCtx.strokeStyle = 'blue';
+
+    // Export Logic
+    downloadBtn.addEventListener('click', async () => {
+        status.textContent = "Merging signatures and creating PDF...";
+        const srcDoc = await PDFDocument.load(currentPdfBytes.slice(0));
+        const newDoc = await PDFDocument.create();
+        
+        const cards = Array.from(pageGrid.querySelectorAll('.page-card'));
+        for (const card of cards) {
+            const cb = card.querySelector('.cb');
+            if (cb.checked) {
+                const origIdx = parseInt(card.dataset.idx);
+                const [copiedPage] = await newDoc.copyPages(srcDoc, [origIdx]);
+                
+                // If the page was signed, embed the signature image
+                if (pageSignatures[origIdx]) {
+                    const sigImg = await newDoc.embedPng(pageSignatures[origIdx]);
+                    const { width, height } = copiedPage.getSize();
+                    copiedPage.drawImage(sigImg, { x: 0, y: 0, width, height });
+                }
+                newDoc.addPage(copiedPage);
+            }
+        }
+
+        const pdfBytes = await newDoc.save();
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = document.getElementById('filename-input').value + ".pdf";
+        link.click();
+        status.textContent = "PDF Saved Successfully!";
     });
+
+    function toggleAll(sel) {
+        document.querySelectorAll('.page-card').forEach(c => {
+            c.querySelector('.cb').checked = sel;
+            c.classList.toggle('selected', sel);
+        });
+        downloadBtn.disabled = !sel;
+    }
 </script>
 
 </body>
