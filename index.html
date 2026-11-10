@@ -7,6 +7,8 @@
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <script src="./pdf-form-tools.js"></script>
+    <script src="./pdf-drafts.js"></script>
     
     <style>
         :root { --primary: #007bff; --success: #28a745; --dark: #333; }
@@ -67,6 +69,8 @@
     <div class="controls">
         <label>Open PDF <input type="file" id="pdf-upload" accept="application/pdf,.pdf"></label>
         <button id="fill-form-btn" class="btn btn-primary" disabled>Fill Form</button>
+        <button id="save-draft-btn" class="btn-outline" disabled>Save Draft</button>
+        <label class="btn-outline">Restore Draft <input type="file" id="draft-upload" accept="application/json,.json" hidden></label>
         <div style="flex-grow:1; display:flex; justify-content:flex-end; align-items:center; gap:10px;">
             <input type="text" id="filename-input" aria-label="Export filename" value="my_document_edited">.pdf
             <button id="download-btn" class="btn btn-success" disabled>Export PDF</button>
@@ -109,6 +113,8 @@
     const pdfUpload = document.getElementById('pdf-upload');
     const downloadBtn = document.getElementById('download-btn');
     const fillFormBtn = document.getElementById('fill-form-btn');
+    const saveDraftBtn = document.getElementById('save-draft-btn');
+    const draftUpload = document.getElementById('draft-upload');
     const pageGrid = document.getElementById('page-grid');
     const status = document.getElementById('status');
     const overlay = document.getElementById('modal-overlay');
@@ -125,118 +131,16 @@
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     new Sortable(pageGrid, { animation: 150, filter: 'button, input', preventOnFilter: false });
 
-    function hasXfa(doc) {
-        const form = doc.catalog.lookupMaybe(PDFLib.PDFName.of('AcroForm'), PDFLib.PDFDict);
-        return !!form && form.has(PDFLib.PDFName.of('XFA'));
-    }
-
-    function describeForm(doc) {
-        const fields = new Map();
-        for (const field of doc.getForm().getFields()) {
-            const info = { name: field.getName(), readOnly: field.isReadOnly(), dirty: false };
-            if (field instanceof PDFLib.PDFTextField && !field.isRichFormatted()) {
-                Object.assign(info, { type: 'text', value: field.getText() || '', multiline: field.isMultiline(), maxLength: field.getMaxLength(), password: field.isPassword(), alignment: field.getAlignment() });
-            } else if (field instanceof PDFLib.PDFCheckBox) {
-                Object.assign(info, { type: 'checkbox', value: field.isChecked() });
-            } else if (field instanceof PDFLib.PDFRadioGroup) {
-                const options = field.getOptions();
-                const radioOptions = Object.fromEntries(field.acroField.getOnValues().map((value, index) => [value.decodeText(), options[index]]));
-                Object.assign(info, { type: 'radio', value: field.getSelected(), options, radioOptions });
-            } else if (field instanceof PDFLib.PDFDropdown || field instanceof PDFLib.PDFOptionList) {
-                const options = field.getOptions();
-                const rawOptions = field.acroField.getOptions();
-                const value = field.getSelected().map(selected => {
-                    const index = rawOptions.findIndex(option => option.value.decodeText() === selected);
-                    return index < 0 ? selected : options[index];
-                });
-                Object.assign(info, { type: 'choice', value, options, multiple: field.isMultiselect(), editable: field instanceof PDFLib.PDFDropdown && field.isEditable(), list: field instanceof PDFLib.PDFOptionList });
-            } else {
-                info.type = 'unsupported';
-            }
-            fields.set(info.name, info);
-        }
-        return fields;
-    }
-
-    function applyFormValues(doc, fields) {
-        const form = doc.getForm();
-        for (const info of fields.values()) {
-            if (!info.dirty || info.readOnly) continue;
-            const field = form.getField(info.name);
-            try {
-                if (info.type === 'text') field.setText(info.value);
-                else if (info.type === 'checkbox') info.value ? field.check() : field.uncheck();
-                else if (info.type === 'radio') info.value ? field.select(info.value) : field.clear();
-                else if (info.type === 'choice') info.value.length ? field.select(info.value) : field.clear();
-                field.defaultUpdateAppearances(form.getDefaultFont());
-            } catch (error) {
-                throw new Error(`Could not save field "${info.name}". Check its length and use characters supported by the PDF font. Your entries are still available.`);
-            }
-        }
-        // Bake appearances into page content before copying: copyPages does not copy the AcroForm.
-        if (form.getFields().length) {
-            form.updateFieldAppearances();
-            for (const field of form.getFields()) {
-                for (const widget of field.acroField.getWidgets()) {
-                    let normal = widget.AP()?.lookup(PDFLib.PDFName.of('N'));
-                    if (!normal && field instanceof PDFLib.PDFSignature) {
-                        const rect = widget.getRectangle();
-                        const blank = doc.context.formXObject([], { BBox: [0, 0, rect.width, rect.height] });
-                        widget.setNormalAppearance(doc.context.register(blank));
-                        normal = blank;
-                    }
-                    const appearances = normal instanceof PDFLib.PDFDict ? normal.values().map(value => doc.context.lookup(value)) : [normal];
-                    for (const appearance of appearances) {
-                        if (appearance instanceof PDFLib.PDFStream) {
-                            // Legacy annotation appearances can omit these; page XObjects cannot.
-                            appearance.dict.set(PDFLib.PDFName.of('Type'), PDFLib.PDFName.of('XObject'));
-                            appearance.dict.set(PDFLib.PDFName.of('Subtype'), PDFLib.PDFName.of('Form'));
-                        }
-                    }
-                }
-            }
-            form.flatten({ updateFieldAppearances: false });
-            // pdf-lib 1.17 can leave deleted child-widget refs in a page's Annots array.
-            for (const page of doc.getPages()) {
-                const annotations = page.node.Annots();
-                if (!annotations) continue;
-                for (let index = annotations.size() - 1; index >= 0; index--) {
-                    const annotation = doc.context.lookup(annotations.get(index));
-                    if (!annotation || annotation.get?.(PDFLib.PDFName.of('Subtype')) === PDFLib.PDFName.of('Widget')) annotations.remove(index);
-                }
-            }
-        }
-    }
-
-    async function createExportPdf(bytes, fields, pageIndices, signatures) {
-        if (!pageIndices.length) throw new Error('Select at least one page to export.');
-        const srcDoc = await PDFDocument.load(bytes.slice(0));
-        if (hasXfa(srcDoc)) throw new Error('XFA forms are not supported. Use a standard fillable PDF (AcroForm).');
-        applyFormValues(srcDoc, fields);
-        const output = await PDFDocument.create();
-        for (const index of pageIndices) {
-            const [page] = await output.copyPages(srcDoc, [index]);
-            output.addPage(page);
-            if (signatures[index]) {
-                const image = await output.embedPng(signatures[index]);
-                const crop = page.getCropBox();
-                const rotation = ((page.getRotation().angle % 360) + 360) % 360;
-                const positions = { 0: [crop.x, crop.y], 90: [crop.x + crop.width, crop.y], 180: [crop.x + crop.width, crop.y + crop.height], 270: [crop.x, crop.y + crop.height] };
-                const [x, y] = positions[rotation];
-                page.drawImage(image, { x, y, width: rotation % 180 ? crop.height : crop.width, height: rotation % 180 ? crop.width : crop.height, rotate: PDFLib.degrees(rotation) });
-            }
-        }
-        return output.save();
-    }
+    const { hasXfa, describeForm, createExportPdf } = PdfToolsForms;
 
     function updateDownloadState() {
         downloadBtn.disabled = !currentPdfBytes || !pageGrid.querySelector('.cb:checked');
     }
 
-    pdfUpload.addEventListener('change', async (event) => {
-        const file = event.target.files[0];
+    pdfUpload.addEventListener('change', event => loadPdf(event.target.files[0]));
+    async function loadPdf(file, draft = null) {
         if (!file) return;
-        pdfUpload.disabled = downloadBtn.disabled = fillFormBtn.disabled = true;
+        pdfUpload.disabled = draftUpload.disabled = saveDraftBtn.disabled = downloadBtn.disabled = fillFormBtn.disabled = true;
         document.getElementById('bulk-actions').style.display = 'none';
         pageGrid.replaceChildren();
         pageSignatures = {}; formFields = new Map(); pageAnnotations = new Map(); currentPdfBytes = null;
@@ -248,11 +152,21 @@
             const doc = await PDFDocument.load(bytes.slice(0));
             if (hasXfa(doc)) throw new Error('XFA forms are not supported. Use a standard fillable PDF (AcroForm).');
             formFields = describeForm(doc);
+            if (draft) {
+                PdfToolsDrafts.restoreFields(formFields, draft.fields);
+                for (const [index, image] of Object.entries(draft.signatures || {})) {
+                    if (/^\d+$/.test(index) && Number(index) < doc.getPageCount() && typeof image === 'string' && image.startsWith('data:image/png;base64,')) pageSignatures[index] = image;
+                }
+            }
             currentPdf = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
             currentPdfBytes = bytes;
             for (let index = 0; index < currentPdf.numPages; index++) {
                 const page = await currentPdf.getPage(index + 1);
                 pageAnnotations.set(index, await page.getAnnotations());
+                for (const annotation of pageAnnotations.get(index)) {
+                    const info = formFields.get(annotation.fieldName);
+                    if (info?.dirty) currentPdf.annotationStorage.setValue(annotation.id, { value: widgetValue(annotation, info) });
+                }
                 const card = document.createElement('div');
                 card.className = 'page-card selected'; card.dataset.idx = index;
                 card.innerHTML = `<button class="btn-zoom" aria-label="Fill or sign page ${index + 1}">🔍</button>
@@ -268,6 +182,7 @@
                     updateDownloadState();
                 });
                 pageGrid.appendChild(card);
+                card.querySelector('.signed-badge').style.display = pageSignatures[index] ? 'block' : 'none';
                 await renderThumb(index, card);
             }
             const editable = [...formFields.values()].filter(field => !field.readOnly && field.type !== 'unsupported').length;
@@ -279,6 +194,17 @@
             if (unsupported) document.getElementById('form-summary').textContent += ' Some field types, such as digital signatures, cannot be edited here.';
             status.textContent = `Loaded ${currentPdf.numPages} pages. All pages are selected. Drag to reorder; deselect pages to leave them out of the export.`;
             document.getElementById('filename-input').value = file.name.replace(/\.pdf$/i, '') + '_edited';
+            if (draft) {
+                document.getElementById('filename-input').value = draft.filename || 'document_edited';
+                const seen = new Set();
+                for (const saved of draft.pages) {
+                    const card = [...pageGrid.children].find(card => Number(card.dataset.idx) === saved.index);
+                    if (!card || seen.has(saved.index)) continue;
+                    seen.add(saved.index); card.querySelector('.cb').checked = !!saved.selected;
+                    card.classList.toggle('selected', !!saved.selected); pageGrid.appendChild(card);
+                }
+                status.textContent = 'Draft restored locally, including form entries, signatures and page selections.';
+            }
             document.getElementById('bulk-actions').style.display = 'block';
         } catch (error) {
             currentPdfBytes = null;
@@ -286,9 +212,30 @@
             status.textContent = `Could not open PDF: ${error.message}`;
             document.getElementById('form-summary').textContent = 'Choose an unencrypted, standard PDF to continue.';
         } finally {
-            pdfUpload.disabled = false;
+            pdfUpload.disabled = draftUpload.disabled = false;
+            saveDraftBtn.disabled = !currentPdfBytes;
             updateDownloadState();
         }
+    }
+
+    saveDraftBtn.addEventListener('click', () => {
+        if (!currentPdfBytes || editorBusy) return;
+        if (activePageIndex !== null) saveSignature();
+        const filename = document.getElementById('filename-input').value.trim() || 'document_edited';
+        const pages = Array.from(pageGrid.children, card => ({ index: Number(card.dataset.idx), selected: card.querySelector('.cb').checked }));
+        const draft = PdfToolsDrafts.createDraft(currentPdfBytes, formFields, pageSignatures, filename, pages);
+        const url = URL.createObjectURL(new Blob([JSON.stringify(draft)], { type: 'application/json' }));
+        const link = document.createElement('a'); link.href = url; link.download = filename.replace(/\.pdf$/i, '') + '_draft.json';
+        document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+        status.textContent = 'Draft download requested. It contains the original PDF, entries and signatures. Use Restore Draft to resume locally.';
+    });
+    draftUpload.addEventListener('change', async event => {
+        const file = event.target.files[0]; if (!file) return;
+        try {
+            const { draft, bytes } = PdfToolsDrafts.readDraft(await file.text());
+            await loadPdf(new File([bytes], 'restored.pdf', { type: 'application/pdf' }), draft);
+        } catch (error) { status.textContent = `Could not restore draft: ${error.message}`; }
+        draftUpload.value = '';
     });
 
     async function renderThumb(index, card) {
