@@ -27,7 +27,7 @@ test('local draft round trip retains the original PDF, all entries, signatures a
     assert.throws(() => drafts.readDraft('{"format":"something-else"}'), /not a PDF Tools draft/);
 });
 
-test('recovery runs against the old tab bindings, downloads locally and replaces only export functions', async () => {
+test('recovery downloads the old tab state locally without replacing export functions or document state', async () => {
     const doc = await PDFLib.PDFDocument.create(); doc.addPage();
     const bytes = await doc.save(), fields = new Map([['Answer', { name: 'Answer', type: 'text', value: 'Original live edit', dirty: true }]]);
     let blob, clicked = false, signatureSaved = false;
@@ -51,14 +51,14 @@ test('recovery runs against the old tab bindings, downloads locally and replaces
     const result = module.namespace.recover();
     assert.equal(signatureSaved, true); assert.equal(clicked, true);
     assert.equal(link.download, 'completed_recovery.json');
-    assert.equal(result.exportRepaired, true);
-    assert.equal(vm.runInContext('createExportPdf', context), forms.createExportPdf);
-    assert.equal(vm.runInContext('applyFormValues', context), forms.applyFormValues);
+    assert.equal(result.localDraftRequested, true);
+    assert.equal(vm.runInContext('createExportPdf()', context), 'old');
+    assert.equal(vm.runInContext('applyFormValues()', context), 'old');
     assert.equal(vm.runInContext('currentPdfBytes', context), bytes);
     assert.equal(vm.runInContext('formFields', context), fields);
     const saved = drafts.readDraft(await blob.text());
     assert.deepEqual(saved.bytes, bytes);
     assert.equal(saved.draft.fields[0].value, 'Original live edit');
     assert.equal(saved.draft.signatures[0], 'data:image/png;base64,live-drawing');
-    assert.match(status.textContent, /Export is repaired/);
+    assert.match(status.textContent, /use Restore Draft/);
 });

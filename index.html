@@ -9,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script src="./pdf-form-tools.js"></script>
     <script src="./pdf-drafts.js"></script>
+    <script src="./pdf-visual-export.js"></script>
     
     <style>
         :root { --primary: #007bff; --success: #28a745; --dark: #333; }
@@ -47,6 +48,8 @@
         .mode-buttons button[aria-pressed="true"] { background: var(--primary); color: white; }
         .help-text { font-size: 13px; color: #555; line-height: 1.5; }
         #form-summary { margin: 0 0 12px; }
+        #export-preview { margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 6px; }
+        #export-preview canvas { max-width: 100%; height: auto; border: 1px solid #ddd; }
         @media (max-width: 600px) { body { padding: 8px; } .container { padding: 15px; } .controls input[type="text"] { max-width: 150px; } .modal-content { padding: 12px; max-width: 95%; } }
         .modal-btns { margin-top: 15px; display: flex; justify-content: center; gap: 10px; }
         
@@ -69,8 +72,9 @@
     <div class="controls">
         <label>Open PDF <input type="file" id="pdf-upload" accept="application/pdf,.pdf"></label>
         <button id="fill-form-btn" class="btn btn-primary" disabled>Fill Form</button>
-        <button id="save-draft-btn" class="btn-outline" disabled>Save Draft</button>
-        <label class="btn-outline">Restore Draft <input type="file" id="draft-upload" accept="application/json,.json" hidden></label>
+        <button id="save-draft-btn" class="btn-outline" disabled>Export Draft</button>
+        <button id="restore-draft-btn" class="btn-outline">Restore Draft</button>
+        <input type="file" id="draft-upload" accept="application/json,.json" hidden>
         <div style="flex-grow:1; display:flex; justify-content:flex-end; align-items:center; gap:10px;">
             <input type="text" id="filename-input" aria-label="Export filename" value="my_document_edited">.pdf
             <button id="download-btn" class="btn btn-success" disabled>Export PDF</button>
@@ -80,6 +84,11 @@
     <div id="status" role="status" aria-live="polite">Upload a PDF to begin...</div>
     <p id="form-summary" class="help-text">Fill existing PDF form fields, draw signatures, and export selected pages. Your files stay on your device.</p>
     <div id="page-grid"></div>
+    <section id="export-preview" hidden>
+        <h2>Exported PDF preview</h2>
+        <p id="export-preview-caption" class="help-text"></p>
+        <canvas id="export-preview-canvas" aria-label="First page of the exported PDF"></canvas>
+    </section>
 </div>
 
 <div id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -115,6 +124,8 @@
     const fillFormBtn = document.getElementById('fill-form-btn');
     const saveDraftBtn = document.getElementById('save-draft-btn');
     const draftUpload = document.getElementById('draft-upload');
+    const restoreDraftBtn = document.getElementById('restore-draft-btn');
+    restoreDraftBtn.addEventListener('click', () => draftUpload.click());
     const pageGrid = document.getElementById('page-grid');
     const status = document.getElementById('status');
     const overlay = document.getElementById('modal-overlay');
@@ -125,24 +136,31 @@
     const zoomContainer = document.getElementById('zoom-canvas-container');
     let currentPdfBytes = null, currentPdf = null, activePageIndex = null;
     let pageSignatures = {}, formFields = new Map(), pageAnnotations = new Map();
-    let editorMode = 'fill', editorBusy = false, drawing = false, signatureChanged = false;
+    let editorMode = 'fill', editorBusy = false, exporting = false, drawing = false, signatureChanged = false;
     let lastFocus = null;
+    let editRevision = 0, draftRevision = 0;
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    new Sortable(pageGrid, { animation: 150, filter: 'button, input', preventOnFilter: false });
+    new Sortable(pageGrid, { animation: 150, filter: 'button, input', preventOnFilter: false, onEnd: event => { if (event.oldIndex !== event.newIndex) editRevision++; } });
+    window.addEventListener('beforeunload', event => {
+        if (currentPdfBytes && editRevision !== draftRevision) { event.preventDefault(); event.returnValue = ''; }
+    });
+    document.getElementById('filename-input').addEventListener('input', () => { if (currentPdfBytes) editRevision++; });
 
     const { hasXfa, describeForm, createExportPdf } = PdfToolsForms;
 
     function updateDownloadState() {
-        downloadBtn.disabled = !currentPdfBytes || !pageGrid.querySelector('.cb:checked');
+        downloadBtn.disabled = exporting || !currentPdfBytes || !pageGrid.querySelector('.cb:checked');
     }
 
     pdfUpload.addEventListener('change', event => loadPdf(event.target.files[0]));
     async function loadPdf(file, draft = null) {
         if (!file) return;
-        pdfUpload.disabled = draftUpload.disabled = saveDraftBtn.disabled = downloadBtn.disabled = fillFormBtn.disabled = true;
+        if (currentPdfBytes && editRevision !== draftRevision && !window.confirm('Open another document and discard changes made since the last draft export? Choose Cancel to export a draft first.')) return;
+        pdfUpload.disabled = draftUpload.disabled = restoreDraftBtn.disabled = saveDraftBtn.disabled = downloadBtn.disabled = fillFormBtn.disabled = true;
         document.getElementById('bulk-actions').style.display = 'none';
         pageGrid.replaceChildren();
+        document.getElementById('export-preview').hidden = true;
         pageSignatures = {}; formFields = new Map(); pageAnnotations = new Map(); currentPdfBytes = null;
         status.textContent = 'Loading PDF...';
         try {
@@ -179,6 +197,7 @@
                     const checkbox = card.querySelector('.cb');
                     if (event.target !== checkbox) checkbox.checked = !checkbox.checked;
                     card.classList.toggle('selected', checkbox.checked);
+                    editRevision++;
                     updateDownloadState();
                 });
                 pageGrid.appendChild(card);
@@ -206,13 +225,14 @@
                 status.textContent = 'Draft restored locally, including form entries, signatures and page selections.';
             }
             document.getElementById('bulk-actions').style.display = 'block';
+            editRevision = draftRevision = 0;
         } catch (error) {
             currentPdfBytes = null;
             pageGrid.replaceChildren();
             status.textContent = `Could not open PDF: ${error.message}`;
             document.getElementById('form-summary').textContent = 'Choose an unencrypted, standard PDF to continue.';
         } finally {
-            pdfUpload.disabled = draftUpload.disabled = false;
+            pdfUpload.disabled = draftUpload.disabled = restoreDraftBtn.disabled = false;
             saveDraftBtn.disabled = !currentPdfBytes;
             updateDownloadState();
         }
@@ -224,10 +244,11 @@
         const filename = document.getElementById('filename-input').value.trim() || 'document_edited';
         const pages = Array.from(pageGrid.children, card => ({ index: Number(card.dataset.idx), selected: card.querySelector('.cb').checked }));
         const draft = PdfToolsDrafts.createDraft(currentPdfBytes, formFields, pageSignatures, filename, pages);
-        const url = URL.createObjectURL(new Blob([JSON.stringify(draft)], { type: 'application/json' }));
+        const url = URL.createObjectURL(new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' }));
         const link = document.createElement('a'); link.href = url; link.download = filename.replace(/\.pdf$/i, '') + '_draft.json';
         document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
-        status.textContent = 'Draft download requested. It contains the original PDF, entries and signatures. Use Restore Draft to resume locally.';
+        draftRevision = editRevision;
+        status.textContent = 'Draft download requested. Keep the JSON file on your device; use Restore Draft to reopen it with all entries and signatures.';
     });
     draftUpload.addEventListener('change', async event => {
         const file = event.target.files[0]; if (!file) return;
@@ -315,6 +336,7 @@
                 else if (info.type === 'choice') info.value = control.tagName === 'SELECT' ? Array.from(control.selectedOptions, option => option.value).filter(Boolean) : control.value ? [control.value] : [];
                 else info.value = control.value;
                 info.dirty = true;
+                editRevision++;
                 syncFormField(info);
             });
             formLayer.appendChild(control); count++;
@@ -388,7 +410,7 @@
         lastFocus?.focus();
         for (const card of pageGrid.querySelectorAll('.page-card')) renderThumb(Number(card.dataset.idx), card).catch(() => {});
     }
-    function clearSignature() { if (!editorBusy) { sCtx.clearRect(0, 0, sCanvas.width, sCanvas.height); signatureChanged = true; } }
+    function clearSignature() { if (!editorBusy) { sCtx.clearRect(0, 0, sCanvas.width, sCanvas.height); signatureChanged = true; editRevision++; } }
     overlay.addEventListener('keydown', event => {
         if (event.key === 'Escape') { event.preventDefault(); closeModal(); }
         if (event.key !== 'Tab') return;
@@ -403,7 +425,7 @@
     };
     sCanvas.addEventListener('pointerdown', event => {
         if (editorMode !== 'sign' || editorBusy) return;
-        drawing = true; signatureChanged = true; sCanvas.setPointerCapture(event.pointerId);
+        drawing = true; signatureChanged = true; editRevision++; sCanvas.setPointerCapture(event.pointerId);
         sCtx.beginPath(); sCtx.moveTo(...getPos(event)); event.preventDefault();
     });
     sCanvas.addEventListener('pointermove', event => { if (drawing) { sCtx.lineTo(...getPos(event)); sCtx.stroke(); event.preventDefault(); } });
@@ -411,25 +433,59 @@
     sCanvas.addEventListener('pointercancel', () => { drawing = false; });
 
     downloadBtn.addEventListener('click', async () => {
+        if (exporting) return;
+        exporting = true;
         const indices = Array.from(pageGrid.querySelectorAll('.page-card')).filter(card => card.querySelector('.cb').checked).map(card => Number(card.dataset.idx));
-        downloadBtn.disabled = pdfUpload.disabled = true;
+        downloadBtn.disabled = pdfUpload.disabled = draftUpload.disabled = restoreDraftBtn.disabled = fillFormBtn.disabled = true;
         status.textContent = 'Saving form entries and signatures into the PDF...';
         try {
-            const bytes = await createExportPdf(currentPdfBytes, formFields, indices, pageSignatures);
+            let bytes, expectedPages = null;
+            if (formFields.size) {
+                const rendered = await PdfToolsVisualExport.createRenderedPdf({ pdf: currentPdf, fields: formFields, pageIndices: indices, signatures: pageSignatures, onProgress: (page, total) => { status.textContent = `Rendering completed page ${page} of ${total}...`; } });
+                bytes = rendered.bytes; expectedPages = rendered.pages;
+            } else bytes = await createExportPdf(currentPdfBytes, formFields, indices, pageSignatures);
+            status.textContent = 'Checking the exported PDF...';
+            await verifyExport(bytes, expectedPages);
             const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
             const link = document.createElement('a'); link.href = url;
             link.download = (document.getElementById('filename-input').value.trim().replace(/\.pdf$/i, '') || 'document_edited') + '.pdf';
             document.body.appendChild(link); link.click(); link.remove();
             setTimeout(() => URL.revokeObjectURL(url), 10000);
-            status.textContent = `PDF exported successfully: ${indices.length} page${indices.length === 1 ? '' : 's'}, with entries fixed in place.`;
+            status.textContent = `PDF download requested: ${indices.length} page${indices.length === 1 ? '' : 's'}. The preview below is rendered from the exported file. Your document remains open.`;
         } catch (error) {
             status.textContent = `Could not export PDF: ${error.message}`;
         } finally {
-            pdfUpload.disabled = false; updateDownloadState();
+            exporting = false;
+            pdfUpload.disabled = draftUpload.disabled = restoreDraftBtn.disabled = false;
+            fillFormBtn.disabled = ![...formFields.values()].some(field => !field.readOnly && field.type !== 'unsupported');
+            updateDownloadState();
         }
     });
+    async function verifyExport(bytes, expectedPages) {
+        const exported = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+        const preview = document.getElementById('export-preview');
+        preview.hidden = true;
+        try {
+            if (expectedPages && exported.numPages !== expectedPages.length) throw new Error('The exported page count does not match the selection. Your draft is still open.');
+            for (let index = 0; index < exported.numPages; index++) {
+                const page = await exported.getPage(index + 1);
+                const base = page.getViewport({ scale: 1 });
+                const viewport = page.getViewport({ scale: Math.min(1, 700 / base.width) });
+                const canvas = index === 0 ? document.getElementById('export-preview-canvas') : document.createElement('canvas');
+                canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                const ink = PdfToolsVisualExport.canvasInk(canvas);
+                if (expectedPages?.[index].fraction > 0.0001 && ink.fraction < expectedPages[index].fraction * 0.1) throw new Error(`Export verification found missing content on page ${index + 1}. Your entries are still open; export a draft to keep them.`);
+                if (index === 0) preview.dataset.ink = String(ink.ink);
+                else canvas.width = canvas.height = 1;
+            }
+            document.getElementById('export-preview-caption').textContent = `First page of the ${exported.numPages}-page exported file. Form exports preserve appearance as page images; Export Draft keeps the editable data.`;
+            preview.hidden = false;
+        } finally { await exported.destroy(); }
+    }
     function toggleAll(selected) {
         pageGrid.querySelectorAll('.page-card').forEach(card => { card.querySelector('.cb').checked = selected; card.classList.toggle('selected', selected); });
+        if (currentPdfBytes) editRevision++;
         updateDownloadState();
     }
 </script>

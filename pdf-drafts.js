@@ -9,9 +9,9 @@
         for (let offset = 0; offset < data.length; offset += 32768) binary += String.fromCharCode(...data.subarray(offset, offset + 32768));
         return {
             format: 'pdf-tools-draft', version: 1, filename,
-            pdf: btoa(binary),
             fields: Array.from(fields.values(), field => ({ name: field.name, type: field.type, value: field.value, dirty: field.dirty })),
-            signatures: { ...signatures }, pages: pages.map(page => ({ index: page.index, selected: !!page.selected }))
+            pages: pages.map(page => ({ index: page.index, selected: !!page.selected })),
+            pdf: btoa(binary), signatures: { ...signatures }
         };
     }
     function readDraft(text) {
