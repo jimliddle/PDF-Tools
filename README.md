@@ -1,26 +1,73 @@
-# PDF-Tools
- A single page HTML file that enables individual pages of PDF's to be extracted locally, with individual pages being able to be deleted and pages re-ordered before saving.
+# PDF Tools
 
- https://jimliddle.github.io/PDF-Tools/
+Fill in PDF forms, draw signatures, reorder pages, and save just the pages you need. Your documents and answers stay on your device.
 
- Pages can be made full screen to analyze contents by clicking the magnifying glass icon, and once in this state the page can be written on (for annotations or signature) and these annotations will be saved out into the new pdf once exported.
+[Open PDF Tools](https://jimliddle.github.io/PDF-Tools/)
 
-Use **Fill Form** to enter text directly into an existing fillable PDF's highlighted boxes. Standard AcroForm text fields (including multiline fields), checkboxes, radio buttons, dropdowns, and option lists are supported. Existing entries are loaded, read-only fields stay read-only, and changes are kept when moving between pages or switching to **Draw / Sign**. Repeated fields stay in sync across pages.
+## Fill in a form
 
-All pages start selected. Use the page checkboxes and drag to choose the pages and their export order, set the filename, then click **Export PDF**. Entries and drawn signatures are fixed into the final PDF so they remain visible after extraction and reordering. Exported fields are no longer editable; keep the original PDF if you need to fill it again.
+1. Click **Open PDF** and choose your file.
+2. Click **Fill Form**, or the magnifying glass on a page.
+3. Type in the highlighted boxes and choose any tick boxes or other options.
+4. Use **Previous Page** and **Next Page** to move through the document.
+5. Click **Save & Close** to return to the page thumbnails.
 
-Scanned documents and printed boxes without actual form fields cannot be filled. XFA forms and editing digital-signature or rich-text fields are not supported. Text that cannot be rendered by the PDF export font produces an error without losing the entries.
+Entries stay in place when you move between pages or switch between filling and drawing. If the same field appears on more than one page, its value stays in sync. Read-only fields cannot be changed.
 
-As its local it keeps everything local and private. Pdf-lib Javascript ibrary is used as it handles PDF manipulation directly in the browser. Drag-and-Drop Reordering uses the SortableJS lib.
+## Choose pages and export a PDF
 
-The application uses a CDN to load the library, but the actual processing of your files happens entirely on the local machine.
+The **Pages to export** bar sits above the page thumbnails. It shows how many pages are selected.
 
-**Export Draft** downloads a local JSON backup containing the original PDF, all form entries, signatures and page selections. **Restore Draft** opens that file locally so you can resume later; the JSON is a recovery file, not a PDF to open in a document viewer. Export Draft remains available after an export failure. The page warns before leaving or replacing changes made since the last draft export. Documents and answers are never uploaded or stored online by the toolkit.
+- **Select All** includes every page.
+- **Deselect All** clears the selection.
+- Tick or untick individual pages to choose which ones to include.
+- Drag the thumbnails to change the order of the pages.
 
-Form PDFs export as rendered page images, using the same PDF.js engine as the editor. This avoids copying or flattening damaged form structures. Every exported page is reopened and checked for missing content before download, and the first exported page is previewed below the editor. Text in these completed form exports is not searchable; use Export Draft to keep the editable data. PDFs without forms retain the existing page-copy export.
+All pages are selected when you open a PDF. A restored draft keeps the selection you saved, so check the page count before exporting.
 
-For development, run `npm ci` and `npm test`. The tests generate PDFs in memory and check form values, visible exported text, repeated fields, page selection/order, rotations, signatures, local draft recovery, and error handling. The website uses static HTML and JavaScript and requires no build step.
+Set the filename, then click **Export PDF**. Only the selected pages are included, in the order shown. The exported file is checked for missing page content, and its first page is previewed below the editor. The document stays open after export.
 
-<img width="683" height="399" alt="PDF Tools Image" src="https://github.com/user-attachments/assets/6ed0bba6-124b-4374-ae19-29deb12b26dd" />
+Completed forms are saved as page images inside a PDF. This keeps the visible text and drawings in place, but the exported fields cannot be edited and the text is not searchable. PDFs without form fields use the original page-copy export.
 
+## Save a draft and come back later
 
+Click **Export Draft** to download a JSON file containing:
+
+- The original PDF, including every page.
+- Your form entries and drawn signatures.
+- The page order, selection, and export filename.
+
+To continue, click **Restore Draft** and choose that JSON file. You do not need to open the original PDF separately. The JSON is a draft for PDF Tools, not a PDF to open in a document viewer. Older recovery JSON files also work with Restore Draft.
+
+Export a draft before closing the tab if you want to edit the document later. Nothing is saved automatically. The page warns before you leave or replace changes made since the last draft export. Export Draft remains available if PDF export fails.
+
+## Draw or sign a page
+
+Open a page with its magnifying glass, then choose **Draw / Sign**. Use your mouse or a touch screen to draw on the page. **Clear Signature** removes the drawing on that page. Click **Save & Close** when finished.
+
+Drawings are included in the exported PDF. A drawn signature is an image, not a digital certificate.
+
+## Files that can be filled
+
+The PDF must already have editable form fields. Text boxes, multiline fields, tick boxes, radio buttons, dropdowns, and lists are supported.
+
+Scanned pages and printed boxes without form fields cannot be typed into. Password-protected PDFs and forms using Adobe's XFA format cannot be opened. Digital-signature fields and rich-text fields cannot be edited here.
+
+## Privacy
+
+PDFs, answers, signatures, and drafts are processed in your browser. The toolkit does not upload them or save them on a server. Draft files are downloaded to your device and contain the full document and your entries.
+
+The page loads its JavaScript libraries from public CDNs, so an internet connection is needed to load the site.
+
+## Development
+
+The site uses plain HTML and JavaScript and runs on GitHub Pages without a build step.
+
+To install the test dependencies and run the checks:
+
+```sh
+npm ci
+npm test
+```
+
+The [browser check](https://jimliddle.github.io/PDF-Tools/tests/browser.html) tests form filling, PDF export, draft export, and draft restore with a generated sample document. It does not need any personal files.

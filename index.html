@@ -48,6 +48,8 @@
         .mode-buttons button[aria-pressed="true"] { background: var(--primary); color: white; }
         .help-text { font-size: 13px; color: #555; line-height: 1.5; }
         #form-summary { margin: 0 0 12px; }
+        .page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 15px; margin-bottom: 15px; background: #f0f5fb; border-radius: 6px; }
+        #selection-count { margin-left: auto; font-size: 14px; }
         #export-preview { margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 6px; }
         #export-preview canvas { max-width: 100%; height: auto; border: 1px solid #ddd; }
         @media (max-width: 600px) { body { padding: 8px; } .container { padding: 15px; } .controls input[type="text"] { max-width: 150px; } .modal-content { padding: 12px; max-width: 95%; } }
@@ -63,10 +65,6 @@
 <div class="container">
     <header>
         <h1>PDF Tools</h1>
-        <div id="bulk-actions" style="display:none;">
-            <button class="btn-outline" onclick="toggleAll(true)">Select All</button>
-            <button class="btn-outline" onclick="toggleAll(false)">Clear All</button>
-        </div>
     </header>
 
     <div class="controls">
@@ -83,6 +81,12 @@
 
     <div id="status" role="status" aria-live="polite">Upload a PDF to begin...</div>
     <p id="form-summary" class="help-text">Fill existing PDF form fields, draw signatures, and export selected pages. Your files stay on your device.</p>
+    <div id="bulk-actions" class="page-actions" style="display:none;" role="group" aria-label="Pages to export">
+        <strong>Pages to export</strong>
+        <button id="select-all-btn" class="btn btn-primary" onclick="toggleAll(true)">Select All</button>
+        <button id="deselect-all-btn" class="btn-outline" onclick="toggleAll(false)">Deselect All</button>
+        <span id="selection-count" role="status" aria-live="polite"></span>
+    </div>
     <div id="page-grid"></div>
     <section id="export-preview" hidden>
         <h2>Exported PDF preview</h2>
@@ -150,7 +154,11 @@
     const { hasXfa, describeForm, createExportPdf } = PdfToolsForms;
 
     function updateDownloadState() {
-        downloadBtn.disabled = exporting || !currentPdfBytes || !pageGrid.querySelector('.cb:checked');
+        const total = pageGrid.querySelectorAll('.page-card').length;
+        const selected = pageGrid.querySelectorAll('.cb:checked').length;
+        downloadBtn.disabled = exporting || !currentPdfBytes || !selected;
+        document.getElementById('select-all-btn').disabled = document.getElementById('deselect-all-btn').disabled = exporting || !total;
+        document.getElementById('selection-count').textContent = `${selected} of ${total} pages selected`;
     }
 
     pdfUpload.addEventListener('change', event => loadPdf(event.target.files[0]));
@@ -224,7 +232,7 @@
                 }
                 status.textContent = 'Draft restored locally, including form entries, signatures and page selections.';
             }
-            document.getElementById('bulk-actions').style.display = 'block';
+            document.getElementById('bulk-actions').style.display = 'flex';
             editRevision = draftRevision = 0;
         } catch (error) {
             currentPdfBytes = null;
@@ -435,6 +443,7 @@
     downloadBtn.addEventListener('click', async () => {
         if (exporting) return;
         exporting = true;
+        updateDownloadState();
         const indices = Array.from(pageGrid.querySelectorAll('.page-card')).filter(card => card.querySelector('.cb').checked).map(card => Number(card.dataset.idx));
         downloadBtn.disabled = pdfUpload.disabled = draftUpload.disabled = restoreDraftBtn.disabled = fillFormBtn.disabled = true;
         status.textContent = 'Saving form entries and signatures into the PDF...';
@@ -484,8 +493,13 @@
         } finally { await exported.destroy(); }
     }
     function toggleAll(selected) {
-        pageGrid.querySelectorAll('.page-card').forEach(card => { card.querySelector('.cb').checked = selected; card.classList.toggle('selected', selected); });
-        if (currentPdfBytes) editRevision++;
+        let changed = false;
+        pageGrid.querySelectorAll('.page-card').forEach(card => {
+            const checkbox = card.querySelector('.cb');
+            if (checkbox.checked !== selected) changed = true;
+            checkbox.checked = selected; card.classList.toggle('selected', selected);
+        });
+        if (currentPdfBytes && changed) editRevision++;
         updateDownloadState();
     }
 </script>
