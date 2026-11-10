@@ -1,6 +1,12 @@
 {
   "name": "pdf-tools",
   "private": true,
-  "scripts": { "test": "node --experimental-vm-modules --test tests/*.test.cjs" },
-  "devDependencies": { "pdf-lib": "1.17.1" }
+  "scripts": {
+    "test": "node --experimental-vm-modules --test tests/*.test.cjs"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "0.1.100",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "3.11.174"
+  }
 }

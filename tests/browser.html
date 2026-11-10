@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PDF Tools browser regression check</title>
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="../pdf-visual-export.js"></script>
+  <style>body{font:16px system-ui;margin:24px}button{padding:12px}pre{white-space:pre-wrap}canvas{max-width:100%;border:1px solid #aaa}iframe{width:100%;height:600px;border:1px solid #aaa}</style>
+</head>
+<body>
+  <h1>Browser regression check</h1>
+  <p>Uses generated test data only. Checks the actual editor, PDF export, local draft export, and local draft restore. Test downloads are intercepted inside the test frame.</p>
+  <button id="run">Run browser checks</button>
+  <pre id="result" role="status">Ready</pre>
+  <canvas id="preview" aria-label="Rendered test export"></canvas>
+  <iframe id="app" title="PDF Tools under test" src="../index.html"></iframe>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const report = document.getElementById('result');
+    function check(condition, message) { if (!condition) throw new Error(message); }
+    async function until(predicate) {
+      const deadline = Date.now() + 60000;
+      while (!predicate()) { if (Date.now() > deadline) throw new Error('Timed out waiting for the editor'); await new Promise(resolve => setTimeout(resolve, 100)); }
+    }
+    document.getElementById('run').addEventListener('click', async () => {
+      const button = document.getElementById('run'); button.disabled = true;
+      let exported;
+      try {
+        report.textContent = 'Creating generated fixture...';
+        const source = await PDFLib.PDFDocument.create(), first = source.addPage([400, 500]), second = source.addPage([500, 600]);
+        first.drawText('ORIGINAL CONTENT MUST SURVIVE', { x: 20, y: 450, size: 16 });
+        first.drawRectangle({ x: 20, y: 30, width: 300, height: 25, color: PDFLib.rgb(1, 0, 0) });
+        second.drawText('SECOND PAGE MUST SURVIVE', { x: 20, y: 550, size: 16 });
+        const field = source.getForm().createTextField('Answer'); field.setText('BEFORE');
+        field.addToPage(first, { x: 25, y: 350, width: 300, height: 30 }); field.addToPage(second, { x: 25, y: 450, width: 300, height: 30 });
+        field.setFontSize(12);
+        const orphan = field.acroField.getWidgets()[0].dict.clone(source.context); orphan.delete(PDFLib.PDFName.of('P'));
+        const orphanRef = PDFLib.PDFRef.of(1172); source.context.assign(orphanRef, orphan); field.acroField.addWidget(orphanRef);
+        const bytes = await source.save();
+        const frame = document.getElementById('app'), win = frame.contentWindow, doc = frame.contentDocument;
+        await until(() => typeof win.loadPdf === 'function');
+        let pdfBlob, draftBlob;
+        const makeUrl = win.URL.createObjectURL.bind(win.URL);
+        win.URL.createObjectURL = blob => { if (blob.type === 'application/pdf') pdfBlob = blob; if (blob.type === 'application/json') draftBlob = blob; return makeUrl(blob); };
+        const click = win.HTMLAnchorElement.prototype.click;
+        win.HTMLAnchorElement.prototype.click = function () { if (!this.download) click.call(this); };
+        await win.loadPdf(new win.File([bytes], 'generated-test.pdf', { type: 'application/pdf' }));
+        doc.getElementById('fill-form-btn').click();
+        await until(() => !doc.getElementById('close-modal-btn').disabled && doc.querySelector('.form-control'));
+        const input = doc.querySelector('.form-control'); input.value = 'VISIBLE EDITS MUST SURVIVE'; input.dispatchEvent(new win.Event('input', { bubbles: true }));
+        doc.getElementById('close-modal-btn').click();
+        report.textContent = 'Running the actual Export PDF button...';
+        doc.getElementById('download-btn').click();
+        await until(() => !!pdfBlob || doc.getElementById('status').textContent.startsWith('Could not export'));
+        check(pdfBlob, doc.getElementById('status').textContent);
+        exported = await pdfjsLib.getDocument({ data: new Uint8Array(await pdfBlob.arrayBuffer()) }).promise;
+        check(exported.numPages === 2, 'Export lost pages');
+        const preview = document.getElementById('preview');
+        for (let index = 1; index <= 2; index++) {
+          const page = await exported.getPage(index), viewport = page.getViewport({ scale: 1 });
+          const canvas = index === 1 ? preview : document.createElement('canvas'); canvas.width = viewport.width; canvas.height = viewport.height;
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+          check(PdfToolsVisualExport.canvasInk(canvas).ink > 1000, `Exported page ${index} is blank`);
+        }
+        check(!doc.getElementById('export-preview').hidden, 'Actual exported-file preview was not displayed');
+        check(doc.querySelectorAll('.page-card').length === 2, 'Export cleared the open document');
+        check(!doc.getElementById('save-draft-btn').disabled, 'Export Draft was disabled');
+        doc.getElementById('save-draft-btn').click(); check(draftBlob, 'Draft was not exported');
+        const draft = JSON.parse(await draftBlob.text()); check(draft.fields.find(field => field.name === 'Answer').value === 'VISIBLE EDITS MUST SURVIVE', 'Draft lost the edited answer');
+        check(atob(draft.pdf).startsWith('%PDF-'), 'Draft lost the original PDF');
+        report.textContent = 'Testing the actual Restore Draft control...';
+        const transfer = new win.DataTransfer(); transfer.items.add(new win.File([JSON.stringify(draft)], 'generated-draft.json', { type: 'application/json' }));
+        const restore = doc.getElementById('draft-upload'); restore.files = transfer.files; restore.dispatchEvent(new win.Event('change', { bubbles: true }));
+        await until(() => doc.getElementById('status').textContent.startsWith('Draft restored locally'));
+        doc.getElementById('fill-form-btn').click();
+        await until(() => !doc.getElementById('close-modal-btn').disabled && doc.querySelector('.form-control'));
+        check(doc.querySelector('.form-control').value === 'VISIBLE EDITS MUST SURVIVE', 'Restoring the draft lost the edited answer');
+        doc.getElementById('close-modal-btn').click();
+        report.textContent = 'PASS: actual editor input → nonblank two-page PDF → exported-file preview → document retained → Export Draft → Restore Draft with edited answer retained.';
+        report.dataset.passed = 'true';
+      } catch (error) { report.textContent = 'FAIL: ' + error.message; report.dataset.passed = 'false'; }
+      finally { if (exported) await exported.destroy(); button.disabled = false; }
+    });
+  </script>
+</body>
+</html>

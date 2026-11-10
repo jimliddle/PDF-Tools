@@ -15,7 +15,9 @@ As its local it keeps everything local and private. Pdf-lib Javascript ibrary is
 
 The application uses a CDN to load the library, but the actual processing of your files happens entirely on the local machine.
 
-**Save Draft** downloads a local JSON backup containing the original PDF, all form entries, signatures and page selections. **Restore Draft** opens that file locally so you can resume later. Documents and answers are never uploaded or stored online by the toolkit.
+**Export Draft** downloads a local JSON backup containing the original PDF, all form entries, signatures and page selections. **Restore Draft** opens that file locally so you can resume later; the JSON is a recovery file, not a PDF to open in a document viewer. Export Draft remains available after an export failure. The page warns before leaving or replacing changes made since the last draft export. Documents and answers are never uploaded or stored online by the toolkit.
+
+Form PDFs export as rendered page images, using the same PDF.js engine as the editor. This avoids copying or flattening damaged form structures. Every exported page is reopened and checked for missing content before download, and the first exported page is previewed below the editor. Text in these completed form exports is not searchable; use Export Draft to keep the editable data. PDFs without forms retain the existing page-copy export.
 
 For development, run `npm ci` and `npm test`. The tests generate PDFs in memory and check form values, visible exported text, repeated fields, page selection/order, rotations, signatures, local draft recovery, and error handling. The website uses static HTML and JavaScript and requires no build step.
 
