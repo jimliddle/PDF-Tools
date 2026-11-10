@@ -174,10 +174,38 @@
             }
         }
         // Bake appearances into page content before copying: copyPages does not copy the AcroForm.
-        for (const field of form.getFields()) {
-            if (field instanceof PDFLib.PDFSignature && field.acroField.getWidgets().every(widget => !widget.getNormalAppearance())) form.removeField(field);
+        if (form.getFields().length) {
+            form.updateFieldAppearances();
+            for (const field of form.getFields()) {
+                for (const widget of field.acroField.getWidgets()) {
+                    let normal = widget.AP()?.lookup(PDFLib.PDFName.of('N'));
+                    if (!normal && field instanceof PDFLib.PDFSignature) {
+                        const rect = widget.getRectangle();
+                        const blank = doc.context.formXObject([], { BBox: [0, 0, rect.width, rect.height] });
+                        widget.setNormalAppearance(doc.context.register(blank));
+                        normal = blank;
+                    }
+                    const appearances = normal instanceof PDFLib.PDFDict ? normal.values().map(value => doc.context.lookup(value)) : [normal];
+                    for (const appearance of appearances) {
+                        if (appearance instanceof PDFLib.PDFStream) {
+                            // Legacy annotation appearances can omit these; page XObjects cannot.
+                            appearance.dict.set(PDFLib.PDFName.of('Type'), PDFLib.PDFName.of('XObject'));
+                            appearance.dict.set(PDFLib.PDFName.of('Subtype'), PDFLib.PDFName.of('Form'));
+                        }
+                    }
+                }
+            }
+            form.flatten({ updateFieldAppearances: false });
+            // pdf-lib 1.17 can leave deleted child-widget refs in a page's Annots array.
+            for (const page of doc.getPages()) {
+                const annotations = page.node.Annots();
+                if (!annotations) continue;
+                for (let index = annotations.size() - 1; index >= 0; index--) {
+                    const annotation = doc.context.lookup(annotations.get(index));
+                    if (!annotation || annotation.get?.(PDFLib.PDFName.of('Subtype')) === PDFLib.PDFName.of('Widget')) annotations.remove(index);
+                }
+            }
         }
-        if (form.getFields().length) form.flatten();
     }
 
     async function createExportPdf(bytes, fields, pageIndices, signatures) {

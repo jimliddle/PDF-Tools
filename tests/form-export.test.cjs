@@ -95,6 +95,7 @@ test('exports text, repeated widgets, multiline entries and options in selected 
     assert.match(text[0], /Music/); assert.match(text[0], /Travel/);
     assert.match(text[1], /Locked value/); assert.doesNotMatch(text[1], /Must not change/);
     assert.equal(output.getForm().getFields().length, 0);
+    for (const page of output.getPages()) assert.equal(page.node.Annots()?.size() || 0, 0);
     assert.equal((await PDFDocument.load(original)).getForm().getTextField('Full name').getText(), 'Original');
 });
 
@@ -172,12 +173,32 @@ test('detects and refuses XFA forms before data can be discarded', async () => {
 
 test('handles blank digital signature fields when creating a final copy', async () => {
     const doc = await PDFDocument.load(await fixture());
-    const dict = doc.context.obj({ FT: 'Sig', T: PDFLib.PDFHexString.fromText('Digital signature'), Kids: [] });
-    doc.getForm().acroForm.addField(doc.context.register(dict));
+    const page = doc.getPage(0);
+    const dict = doc.context.obj({ FT: 'Sig', T: PDFLib.PDFHexString.fromText('Digital signature'), Type: 'Annot', Subtype: 'Widget', Rect: [30, 30, 200, 60], P: page.ref });
+    const ref = doc.context.register(dict);
+    doc.getForm().acroForm.addField(ref); page.node.addAnnot(ref);
     const fields = describeForm(doc);
     assert.equal(fields.get('Digital signature').type, 'unsupported');
     applyFormValues(doc, fields);
     assert.equal(doc.getForm().getFields().length, 0);
+});
+
+test('repairs legacy appearance streams and keeps non-form annotations', async () => {
+    const doc = await PDFDocument.load(await fixture()), page = doc.getPage(0);
+    const field = doc.getForm().getTextField('Full name');
+    const appearance = doc.context.lookup(field.acroField.getWidgets()[0].getNormalAppearance());
+    appearance.dict.delete(PDFName.of('Type')); appearance.dict.delete(PDFName.of('Subtype'));
+    const link = doc.context.obj({ Type: 'Annot', Subtype: 'Link', Rect: [10, 10, 50, 30], A: { S: 'URI', URI: PDFLib.PDFString.of('https://example.com') } });
+    page.node.addAnnot(doc.context.register(link));
+    const original = await doc.save();
+    const output = await PDFDocument.load(await createExportPdf(original, describeForm(doc), [0], {}));
+    const exportedPage = output.getPage(0);
+    assert.match(pageText(exportedPage), /Original/);
+    const xObjects = exportedPage.node.Resources().lookup(PDFName.of('XObject'), PDFDict);
+    for (const [, reference] of xObjects.entries()) assert.equal(output.context.lookup(reference).dict.get(PDFName.of('Subtype')), PDFName.of('Form'));
+    const annotations = exportedPage.node.Annots();
+    assert.equal(annotations.size(), 1);
+    assert.equal(output.context.lookup(annotations.get(0)).get(PDFName.of('Subtype')), PDFName.of('Link'));
 });
 
 // Optional local fixture for manual browser checks; never committed as a binary.
