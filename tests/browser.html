@@ -25,7 +25,7 @@
     }
     document.getElementById('run').addEventListener('click', async () => {
       const button = document.getElementById('run'); button.disabled = true;
-      let exported;
+      let exported, baseline;
       try {
         report.textContent = 'Creating generated fixture...';
         const source = await PDFLib.PDFDocument.create(), first = source.addPage([400, 500]), second = source.addPage([500, 600]);
@@ -55,13 +55,24 @@
         await until(() => !!pdfBlob || doc.getElementById('status').textContent.startsWith('Could not export'));
         check(pdfBlob, doc.getElementById('status').textContent);
         exported = await pdfjsLib.getDocument({ data: new Uint8Array(await pdfBlob.arrayBuffer()) }).promise;
+        baseline = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
         check(exported.numPages === 2, 'Export lost pages');
         const preview = document.getElementById('preview');
         for (let index = 1; index <= 2; index++) {
           const page = await exported.getPage(index), viewport = page.getViewport({ scale: 1 });
           const canvas = index === 1 ? preview : document.createElement('canvas'); canvas.width = viewport.width; canvas.height = viewport.height;
           await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-          check(PdfToolsVisualExport.canvasInk(canvas).ink > 1000, `Exported page ${index} is blank`);
+          const sourcePage = await baseline.getPage(index), sourceCanvas = document.createElement('canvas');
+          const sourceViewport = sourcePage.getViewport({ scale: 1 }); sourceCanvas.width = sourceViewport.width; sourceCanvas.height = sourceViewport.height;
+          await sourcePage.render({ canvasContext: sourceCanvas.getContext('2d'), viewport: sourceViewport }).promise;
+          const sourceInk = PdfToolsVisualExport.canvasInk(sourceCanvas), exportedInk = PdfToolsVisualExport.canvasInk(canvas);
+          check(exportedInk.fraction > sourceInk.fraction * 0.75, `Exported page ${index} lost original content`);
+          if (index === 1) {
+            const tail = canvas.getContext('2d').getImageData(110, 122, 180, 24).data;
+            let textPixels = 0;
+            for (let offset = 0; offset < tail.length; offset += 4) if (Math.min(tail[offset], tail[offset + 1], tail[offset + 2]) < 200) textPixels++;
+            check(textPixels > 20, 'The entered text is missing from the actual exported PDF');
+          }
         }
         check(!doc.getElementById('export-preview').hidden, 'Actual exported-file preview was not displayed');
         check(doc.querySelectorAll('.page-card').length === 2, 'Export cleared the open document');
@@ -80,7 +91,7 @@
         report.textContent = 'PASS: actual editor input → nonblank two-page PDF → exported-file preview → document retained → Export Draft → Restore Draft with edited answer retained.';
         report.dataset.passed = 'true';
       } catch (error) { report.textContent = 'FAIL: ' + error.message; report.dataset.passed = 'false'; }
-      finally { if (exported) await exported.destroy(); button.disabled = false; }
+      finally { if (exported) await exported.destroy(); if (baseline) await baseline.destroy(); button.disabled = false; }
     });
   </script>
 </body>
