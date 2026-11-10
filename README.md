@@ -15,7 +15,9 @@ As its local it keeps everything local and private. Pdf-lib Javascript ibrary is
 
 The application uses a CDN to load the library, but the actual processing of your files happens entirely on the local machine.
 
-For development, run `npm ci` and `npm test`. The tests generate PDFs in memory and check form values, visible exported text, repeated fields, page selection/order, rotations, signatures, and error handling. The website remains a single HTML file and requires no build step.
+**Save Draft** downloads a local JSON backup containing the original PDF, all form entries, signatures and page selections. **Restore Draft** opens that file locally so you can resume later. Documents and answers are never uploaded or stored online by the toolkit.
+
+For development, run `npm ci` and `npm test`. The tests generate PDFs in memory and check form values, visible exported text, repeated fields, page selection/order, rotations, signatures, local draft recovery, and error handling. The website uses static HTML and JavaScript and requires no build step.
 
 <img width="683" height="399" alt="PDF Tools Image" src="https://github.com/user-attachments/assets/6ed0bba6-124b-4374-ae19-29deb12b26dd" />
 

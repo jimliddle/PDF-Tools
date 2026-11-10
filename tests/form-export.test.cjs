@@ -10,8 +10,7 @@ const { PDFDocument, PDFName, PDFDict, PDFRawStream, decodePDFRawStream } = PDFL
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 new vm.Script(script);
-const functions = script.slice(script.indexOf('function hasXfa'), script.indexOf('function updateDownloadState'));
-const { describeForm, applyFormValues, createExportPdf, hasXfa } = new Function('PDFLib', 'PDFDocument', functions + '\nreturn { describeForm, applyFormValues, createExportPdf, hasXfa };')(PDFLib, PDFDocument);
+const { describeForm, applyFormValues, createExportPdf, hasXfa } = require('../pdf-form-tools.js');
 
 async function fixture() {
     const doc = await PDFDocument.create();
@@ -203,3 +202,36 @@ test('repairs legacy appearance streams and keeps non-form annotations', async (
 
 // Optional local fixture for manual browser checks; never committed as a binary.
 if (process.env.PDF_TOOLS_FIXTURE) fixture().then(bytes => fs.writeFileSync(process.env.PDF_TOOLS_FIXTURE, bytes));
+
+test('exports attached edits despite an orphan widget with the reported reference', async () => {
+    const doc = await PDFDocument.load(await fixture());
+    const form = doc.getForm(), field = form.getTextField('Full name');
+    const orphan = field.acroField.getWidgets()[0].dict.clone(doc.context);
+    orphan.delete(PDFName.of('P'));
+    const orphanRef = PDFLib.PDFRef.of(1172);
+    doc.context.assign(orphanRef, orphan); field.acroField.addWidget(orphanRef);
+    assert.throws(() => form.findWidgetPage(field.acroField.getWidgets()[2]), /Could not find page for PDFRef 1172 0 R/);
+    const original = await doc.save(), fields = describeForm(doc);
+    edit(fields, 'Full name', 'Keep these edits');
+    const output = await PDFDocument.load(await createExportPdf(original, fields, [1], {}));
+    assert.equal(output.getPageCount(), 1);
+    assert.match(pageText(output.getPage(0)), /Keep these edits/);
+    assert.equal(fields.get('Full name').value, 'Keep these edits');
+    assert.equal(doc.getForm().getTextField('Full name').acroField.getWidgets().length, 3);
+});
+
+test('repairs missing and stale widget page pointers and ignores wholly detached fields', async () => {
+    const doc = await PDFDocument.load(await fixture()), form = doc.getForm();
+    const widgets = form.getTextField('Full name').acroField.getWidgets();
+    widgets[0].dict.delete(PDFName.of('P'));
+    widgets[1].dict.set(PDFName.of('P'), PDFLib.PDFRef.of(9999));
+    const detached = form.createTextField('Detached');
+    detached.addToPage(doc.getPage(0), { x: 10, y: 20, width: 100, height: 20 });
+    const widget = detached.acroField.getWidgets()[0];
+    widget.dict.delete(PDFName.of('P'));
+    doc.getPage(0).node.removeAnnot(doc.context.getObjectRef(widget.dict));
+    const original = await doc.save(), fields = describeForm(doc);
+    edit(fields, 'Full name', 'Still present');
+    const output = await PDFDocument.load(await createExportPdf(original, fields, [0, 1], {}));
+    for (const page of output.getPages()) assert.match(pageText(page), /Still present/);
+});
